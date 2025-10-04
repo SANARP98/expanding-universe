@@ -52,6 +52,7 @@ TARGET_POINTS = 10         # e.g., ₹6
 STOPLOSS_POINTS = 2       # e.g., ₹4 (R:R = 1.5)
 
 # Trend filter EMAs
+
 EMA_FAST = 5
 EMA_SLOW = 20
 
