@@ -60,8 +60,8 @@ ATR_WINDOW = 14
 ATR_MIN_POINTS = 2.0      # require at least this much average range
 
 # Trading session windows (IST)
-SESSION_WINDOWS = [(time(9, 20), time(11, 0)),
-                   (time(13, 45), time(15, 5))]
+SESSION_WINDOWS = [(time(10, 20), time(11, 0)),
+                   (time(11, 1), time(14, 29))]
 
 # Daily loss cap (absolute ₹). Stop trading for the day after breaching.
 DAILY_LOSS_CAP = -1000   # tweak as needed
