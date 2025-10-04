@@ -39,10 +39,10 @@ from datetime import time
 
 # ==================== CONFIGURATION ====================
 
-INPUT_CSV = "NIFTY28OCT2524800PE_history.csv"
+INPUT_CSV = "NIFTY25NOV2525800PE_history.csv"
 
 # Capital tracking (not used for sizing here; fixed qty per point)
-STARTING_CAPITAL = 100_000
+STARTING_CAPITAL = 200_000
 
 # Position sizing: rupees per point of move (e.g., 2 lots × 75 = 150)
 QTY_PER_POINT = 150
@@ -50,6 +50,16 @@ QTY_PER_POINT = 150
 # Targets & Stops (points/rupees)
 TARGET_POINTS = 10         # e.g., ₹6
 STOPLOSS_POINTS = 2       # e.g., ₹4 (R:R = 1.5)
+
+# Trailing Target settings
+ENABLE_TRAILING_TARGET = True
+TRAILING_TARGET_TRIGGER = 3    # points of profit to activate trailing target
+TRAILING_TARGET_OFFSET = 2     # trail this many points below high (LONG) / above low (SHORT)
+
+# Trailing Stoploss settings
+ENABLE_TRAILING_STOPLOSS = True
+TRAILING_SL_TRIGGER = 3        # points of profit to activate trailing SL
+TRAILING_SL_OFFSET = 1         # trail this many points below high (LONG) / above low (SHORT)
 
 # Trend filter EMAs
 
@@ -155,42 +165,89 @@ def resolve_exit_on_bar(position: str, entry_price: float, bar: pd.Series):
     """
     Given a position and the single exit bar (next bar), decide exit price and reason.
     Conservative rule: if both TP & SL are inside the bar, assume SL triggers first.
+
+    Supports trailing target and trailing stop-loss based on the bar's high/low.
     """
+    high = bar['high']
+    low = bar['low']
+
     if position == 'LONG':
+        # Initial levels
         tp = entry_price + TARGET_POINTS
         sl = entry_price - STOPLOSS_POINTS
 
-        high = bar['high']
-        low = bar['low']
+        # Calculate unrealized profit at the high of the bar
+        profit_at_high = high - entry_price
 
+        # Apply trailing target if enabled and trigger reached
+        trailing_target_active = False
+        if ENABLE_TRAILING_TARGET and profit_at_high >= TRAILING_TARGET_TRIGGER:
+            trailing_tp = high - TRAILING_TARGET_OFFSET
+            if trailing_tp > tp:  # Only trail up, never down
+                tp = trailing_tp
+                trailing_target_active = True
+
+        # Apply trailing stoploss if enabled and trigger reached
+        trailing_sl_active = False
+        if ENABLE_TRAILING_STOPLOSS and profit_at_high >= TRAILING_SL_TRIGGER:
+            trailing_sl_level = high - TRAILING_SL_OFFSET
+            if trailing_sl_level > sl:  # Only trail up, never down
+                sl = trailing_sl_level
+                trailing_sl_active = True
+
+        # Check what got hit
         hit_tp = high >= tp
         hit_sl = low <= sl
 
         if hit_tp and hit_sl and CONSERVATIVE_BOTH_TOUCHED_SL_FIRST:
-            return sl, "Stoploss Hit"
+            reason = "Stoploss Hit (Trailing)" if trailing_sl_active else "Stoploss Hit"
+            return sl, reason
         elif hit_tp:
-            return tp, "Target Hit"
+            reason = "Target Hit (Trailing)" if trailing_target_active else "Target Hit"
+            return tp, reason
         elif hit_sl:
-            return sl, "Stoploss Hit"
+            reason = "Stoploss Hit (Trailing)" if trailing_sl_active else "Stoploss Hit"
+            return sl, reason
         else:
             return float(bar['close']), "End of Candle"
 
     elif position == 'SHORT':
+        # Initial levels
         tp = entry_price - TARGET_POINTS
         sl = entry_price + STOPLOSS_POINTS
 
-        high = bar['high']
-        low = bar['low']
+        # Calculate unrealized profit at the low of the bar
+        profit_at_low = entry_price - low
 
+        # Apply trailing target if enabled and trigger reached
+        trailing_target_active = False
+        if ENABLE_TRAILING_TARGET and profit_at_low >= TRAILING_TARGET_TRIGGER:
+            trailing_tp = low + TRAILING_TARGET_OFFSET
+            if trailing_tp < tp:  # Only trail down, never up
+                tp = trailing_tp
+                trailing_target_active = True
+
+        # Apply trailing stoploss if enabled and trigger reached
+        trailing_sl_active = False
+        if ENABLE_TRAILING_STOPLOSS and profit_at_low >= TRAILING_SL_TRIGGER:
+            trailing_sl_level = low + TRAILING_SL_OFFSET
+            if trailing_sl_level < sl:  # Only trail down, never up
+                sl = trailing_sl_level
+                trailing_sl_active = True
+
+        # Check what got hit
         hit_tp = low <= tp
         hit_sl = high >= sl
 
         if hit_tp and hit_sl and CONSERVATIVE_BOTH_TOUCHED_SL_FIRST:
-            return sl, "Stoploss Hit"
+            reason = "Stoploss Hit (Trailing)" if trailing_sl_active else "Stoploss Hit"
+            return sl, reason
         elif hit_tp:
-            return tp, "Target Hit"
+            reason = "Target Hit (Trailing)" if trailing_target_active else "Target Hit"
+            return tp, reason
         elif hit_sl:
-            return sl, "Stoploss Hit"
+            reason = "Stoploss Hit (Trailing)" if trailing_sl_active else "Stoploss Hit"
+            return sl, reason
         else:
             return float(bar['close']), "End of Candle"
 
@@ -290,6 +347,8 @@ def main():
     print(f"Qty per point: {QTY_PER_POINT}  | Start Capital: ₹{STARTING_CAPITAL:,}")
     print(f"ATR≥{ATR_MIN_POINTS}, EMA{EMA_FAST}/{EMA_SLOW} trend, Sessions: {[(s.strftime('%H:%M'), e.strftime('%H:%M')) for s,e in SESSION_WINDOWS]}")
     print(f"Daily loss cap: ₹{DAILY_LOSS_CAP}")
+    print(f"Trailing Target: {'ON' if ENABLE_TRAILING_TARGET else 'OFF'} (Trigger: {TRAILING_TARGET_TRIGGER}, Offset: {TRAILING_TARGET_OFFSET})")
+    print(f"Trailing SL: {'ON' if ENABLE_TRAILING_STOPLOSS else 'OFF'} (Trigger: {TRAILING_SL_TRIGGER}, Offset: {TRAILING_SL_OFFSET})")
     print("=" * 90)
 
     trades = run_backtest()
