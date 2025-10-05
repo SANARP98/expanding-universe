@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  backtest-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: backtest-server
+    ports:
+      - "1111:1111"
+    volumes:
+      # Mount the .env file for API credentials
+      - ./.env:/app/.env:ro
+      # Mount the data directory to persist CSV files and results
+      - ./data:/app/data
+      # Mount output files directory
+      - ./results:/app/results
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    networks:
+      - backtest-network
+
+networks:
+  backtest-network:
+    driver: bridge

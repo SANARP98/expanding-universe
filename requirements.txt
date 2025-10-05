@@ -2,8 +2,6 @@ openalgo
 pandas
 pytz
 python-dotenv
-uv
 matplotlib
 numpy
-ta-lib
 flask

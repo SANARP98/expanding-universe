@@ -368,42 +368,6 @@ HTML_TEMPLATE = """
                                 <input type="number" name="stoploss_points" value="2" step="0.1" required>
                             </div>
                         </div>
-
-                        <h4 style="margin: 20px 0 10px 0; color: #667eea;">Trailing Target</h4>
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <div class="checkbox-group">
-                                    <input type="checkbox" name="enable_trailing_target" checked>
-                                    <label>Enable Trailing Target</label>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Trigger Points</label>
-                                <input type="number" name="trailing_target_trigger" value="3" step="0.1">
-                            </div>
-                            <div class="form-group">
-                                <label>Offset Points</label>
-                                <input type="number" name="trailing_target_offset" value="2" step="0.1">
-                            </div>
-                        </div>
-
-                        <h4 style="margin: 20px 0 10px 0; color: #667eea;">Trailing Stop Loss</h4>
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <div class="checkbox-group">
-                                    <input type="checkbox" name="enable_trailing_stoploss" checked>
-                                    <label>Enable Trailing Stop Loss</label>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label>Trigger Points</label>
-                                <input type="number" name="trailing_sl_trigger" value="3" step="0.1">
-                            </div>
-                            <div class="form-group">
-                                <label>Offset Points</label>
-                                <input type="number" name="trailing_sl_offset" value="1" step="0.1">
-                            </div>
-                        </div>
                     </div>
                 </div>
 
@@ -435,7 +399,7 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
 
-                <!-- Advanced Exit Logic (GPT Version) -->
+                <!-- Advanced Exit Logic -->
                 <div class="section">
                     <div class="section-header" onclick="toggleSection(this)">
                         🔬 Advanced Exit Logic
@@ -454,15 +418,19 @@ HTML_TEMPLATE = """
                             </div>
                             <div class="form-group">
                                 <div class="checkbox-group">
-                                    <input type="checkbox" name="disable_trailing_on_single_bar" checked>
-                                    <label>Disable Trailing on Single Bar (Recommended)</label>
+                                    <input type="checkbox" name="confirm_trend_at_entry" checked>
+                                    <label>Confirm Trend at Entry (Conservative)</label>
                                 </div>
                             </div>
                             <div class="form-group">
                                 <div class="checkbox-group">
-                                    <input type="checkbox" name="confirm_trend_at_entry" checked>
-                                    <label>Confirm Trend at Entry (Conservative)</label>
+                                    <input type="checkbox" name="enable_eod_square_off" checked>
+                                    <label>Enable EOD Square-off (Intraday Only)</label>
                                 </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Square-off Time (IST)</label>
+                                <input type="time" name="square_off_time" value="15:25" required>
                             </div>
                         </div>
                     </div>
@@ -551,10 +519,8 @@ HTML_TEMPLATE = """
             }
 
             // Handle unchecked checkboxes
-            if (!formData.has('enable_trailing_target')) data.enable_trailing_target = false;
-            if (!formData.has('enable_trailing_stoploss')) data.enable_trailing_stoploss = false;
-            if (!formData.has('disable_trailing_on_single_bar')) data.disable_trailing_on_single_bar = false;
             if (!formData.has('confirm_trend_at_entry')) data.confirm_trend_at_entry = false;
+            if (!formData.has('enable_eod_square_off')) data.enable_eod_square_off = false;
 
             // Disable button and show spinner
             const runButton = document.getElementById('runButton');
@@ -668,18 +634,12 @@ def run_backtest():
         input_csv = f"{symbol}_history.csv"
 
         backtest_cmd = [
-            'python3', 'aaa_dev_daybyday_gpt.py',
+            'python3', 'aaa2.py',
             '--input_csv', input_csv,
             '--starting_capital', str(data.get('starting_capital', 200000)),
             '--qty_per_point', str(data.get('qty_per_point', 150)),
             '--target_points', str(data.get('target_points', 10)),
             '--stoploss_points', str(data.get('stoploss_points', 2)),
-            '--enable_trailing_target', str(data.get('enable_trailing_target', True)),
-            '--trailing_target_trigger', str(data.get('trailing_target_trigger', 3)),
-            '--trailing_target_offset', str(data.get('trailing_target_offset', 2)),
-            '--enable_trailing_stoploss', str(data.get('enable_trailing_stoploss', True)),
-            '--trailing_sl_trigger', str(data.get('trailing_sl_trigger', 3)),
-            '--trailing_sl_offset', str(data.get('trailing_sl_offset', 1)),
             '--ema_fast', str(data.get('ema_fast', 5)),
             '--ema_slow', str(data.get('ema_slow', 20)),
             '--atr_window', str(data.get('atr_window', 14)),
@@ -688,8 +648,9 @@ def run_backtest():
             '--brokerage_per_trade', str(data.get('brokerage_per_trade', 20.0)),
             '--slippage_points', str(data.get('slippage_points', 0.10)),
             '--exit_bar_path', str(data.get('exit_bar_path', 'color')),
-            '--disable_trailing_on_single_bar', str(data.get('disable_trailing_on_single_bar', True)),
-            '--confirm_trend_at_entry', str(data.get('confirm_trend_at_entry', True))
+            '--confirm_trend_at_entry', str(data.get('confirm_trend_at_entry', True)),
+            '--enable_eod_square_off', str(data.get('enable_eod_square_off', True)),
+            '--square_off_time', str(data.get('square_off_time', '15:25'))
         ]
 
         backtest_result = subprocess.run(backtest_cmd, capture_output=True, text=True)

@@ -47,7 +47,7 @@ import sys
 
 # ==================== CONFIGURATION ====================
 
-INPUT_CSV = "NIFTY28OCT2524800CE_history.csv"
+INPUT_CSV = "NIFTY25NOV2525800CE_history.csv"
 
 # Capital tracking (not used for sizing here; fixed qty per point)
 STARTING_CAPITAL = 100_000

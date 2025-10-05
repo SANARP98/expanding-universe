@@ -288,70 +288,60 @@ def run_backtest() -> pd.DataFrame:
             # ensure a container for the date
             daily_pnl.setdefault(d, 0.0)
 
-        # If day already hard-stopped, skip trading entries, but still exit if holding
+        # If day already hard-stopped, skip trading entries
         day_stopped = d in day_hard_stopped
 
-        # Exit on next bar only
-        if in_position:
-            next_bar = df.iloc[i + 1]
-            exit_price, exit_reason = resolve_exit_on_bar(position, entry_price, next_bar)
-
-            if position == 'LONG':
-                pnl_points = exit_price - entry_price
-            else:  # SHORT
-                pnl_points = entry_price - exit_price
-
-            # Calculate gross P&L before costs
-            gross_rupees = pnl_points * QTY_PER_POINT
-
-            # Calculate transaction costs
-            slippage_rupees = SLIPPAGE_POINTS * QTY_PER_POINT * 2  # entry + exit
-            fees_rupees = 2 * BROKERAGE_PER_TRADE                   # entry + exit
-            costs_rupees = slippage_rupees + fees_rupees
-
-            # Net P&L after costs
-            pnl_rupees = gross_rupees - costs_rupees
-            equity += pnl_rupees
-
-            # update daily pnl (counts on the exit bar date)
-            ed = next_bar.name.date()
-            daily_pnl.setdefault(ed, 0.0)
-            daily_pnl[ed] += pnl_rupees
-
-            # if daily cap breached, mark date as stopped
-            if daily_pnl[ed] <= DAILY_LOSS_CAP:
-                day_hard_stopped.add(ed)
-
-            results.append({
-                'entry_time': entry_time,
-                'exit_time' : next_bar.name,
-                'side'      : position,
-                'entry'     : entry_price,
-                'exit'      : exit_price,
-                'pnl_points': pnl_points,
-                'gross_rupees': gross_rupees,
-                'costs_rupees': costs_rupees,
-                'pnl_rupees': pnl_rupees,
-                'equity'    : equity,
-                'exit_reason': exit_reason
-            })
-
-            # flat now
-            in_position = False
-            position = None
-            entry_price = None
-            entry_time = None
-
-        # Entry after generating/closing any prior position
+        # Check for signal and enter/exit on same bar (TRUE single-bar hold)
         if not in_position and not day_stopped:
             sig = scalp_signal(i)
             if sig:
-                # Enter at NEXT bar open
+                # Enter at NEXT bar (i+1) open, exit on SAME bar (i+1) using high/low/close
                 nb = df.iloc[i + 1]
-                in_position = True
-                position = sig
                 entry_price = float(nb['open'])
                 entry_time = nb.name
+
+                # Exit on the same bar (nb) - TRUE single-bar hold
+                exit_price, exit_reason = resolve_exit_on_bar(sig, entry_price, nb)
+
+                if sig == 'LONG':
+                    pnl_points = exit_price - entry_price
+                else:  # SHORT
+                    pnl_points = entry_price - exit_price
+
+                # Calculate gross P&L before costs
+                gross_rupees = pnl_points * QTY_PER_POINT
+
+                # Calculate transaction costs
+                slippage_rupees = SLIPPAGE_POINTS * QTY_PER_POINT * 2  # entry + exit
+                fees_rupees = 2 * BROKERAGE_PER_TRADE                   # entry + exit
+                costs_rupees = slippage_rupees + fees_rupees
+
+                # Net P&L after costs
+                pnl_rupees = gross_rupees - costs_rupees
+                equity += pnl_rupees
+
+                # update daily pnl (counts on the exit bar date)
+                ed = nb.name.date()
+                daily_pnl.setdefault(ed, 0.0)
+                daily_pnl[ed] += pnl_rupees
+
+                # if daily cap breached, mark date as stopped
+                if daily_pnl[ed] <= DAILY_LOSS_CAP:
+                    day_hard_stopped.add(ed)
+
+                results.append({
+                    'entry_time': entry_time,
+                    'exit_time' : nb.name,
+                    'side'      : sig,
+                    'entry'     : entry_price,
+                    'exit'      : exit_price,
+                    'pnl_points': pnl_points,
+                    'gross_rupees': gross_rupees,
+                    'costs_rupees': costs_rupees,
+                    'pnl_rupees': pnl_rupees,
+                    'equity'    : equity,
+                    'exit_reason': exit_reason
+                })
 
     return pd.DataFrame(results)
 
