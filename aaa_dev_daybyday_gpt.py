@@ -20,13 +20,19 @@ Scalp-with-Trend Backtest (single-bar hold)
       → SL triggers first (conservative).
 
 • Risk/Reward defaults:
-  TARGET_POINTS = 6, STOPLOSS_POINTS = 4  (R:R = 1.5)
+  TARGET_POINTS = 10, STOPLOSS_POINTS = 2  (R:R = 5.0)
   QTY_PER_POINT = 150  (e.g., 2 lots × 75)
 
 • Filters:
   - ATR regime: require ATR >= ATR_MIN_POINTS
   - Time windows (IST): [(09:20, 11:00), (13:45, 15:05)]
   - Daily loss cap in ₹ (stop trading for that day once breached)
+
+• New toggles:
+  - DISABLE_TRAILING_ON_SINGLE_BAR (default True)
+  - EXIT_BAR_PATH: "color" | "bull" | "bear" | "worst"  (default "color")
+  - CONFIRM_TREND_AT_ENTRY (default True)
+  - Brokerage/slippage costs
 
 Outputs:
   - Prints summary
@@ -41,34 +47,41 @@ import sys
 
 # ==================== CONFIGURATION ====================
 
-INPUT_CSV = "NIFTY25NOV2525800PE_history.csv"
+INPUT_CSV = "NIFTY28OCT2524800CE_history.csv"
 
 # Capital tracking (not used for sizing here; fixed qty per point)
-STARTING_CAPITAL = 200_000
+STARTING_CAPITAL = 100_000
 
 # Position sizing: rupees per point of move (e.g., 2 lots × 75 = 150)
 QTY_PER_POINT = 150
 
 # Targets & Stops (points/rupees)
-TARGET_POINTS = 10         # e.g., ₹6
-STOPLOSS_POINTS = 2       # e.g., ₹4 (R:R = 1.5)
+TARGET_POINTS = 10
+STOPLOSS_POINTS = 2
 
-# Trailing Target settings
+# Trailing Target settings (can be disabled for single-bar exits)
 ENABLE_TRAILING_TARGET = True
-TRAILING_TARGET_TRIGGER = 3    # points of profit to activate trailing target
-TRAILING_TARGET_OFFSET = 2     # trail this many points below high (LONG) / above low (SHORT)
+TRAILING_TARGET_TRIGGER = 3
+TRAILING_TARGET_OFFSET = 2
 
-# Trailing Stoploss settings
+# Trailing Stoploss settings (can be disabled for single-bar exits)
 ENABLE_TRAILING_STOPLOSS = True
-TRAILING_SL_TRIGGER = 3        # points of profit to activate trailing SL
-TRAILING_SL_OFFSET = 1         # trail this many points below high (LONG) / above low (SHORT)
+TRAILING_SL_TRIGGER = 3
+TRAILING_SL_OFFSET = 1
 
-# Costs (transaction costs)
-BROKERAGE_PER_TRADE = 20.0     # flat per leg (entry + exit = 2 legs)
-SLIPPAGE_POINTS = 0.10         # per leg in points (entry + exit = 2 legs)
+# Exit bar intra-bar path modeling
+# "color" = green → open→low→high→close; red → open→high→low→close
+# "bull"  = always open→low→high→close
+# "bear"  = always open→high→low→close
+# "worst" = skip path details; keep conservative both-touched=SL-first
+EXIT_BAR_PATH = "color"
+# Safest with single-bar exits: disable trailing (default True)
+DISABLE_TRAILING_ON_SINGLE_BAR = True
+
+# Confirm trend again at entry (conservative). Note: EMAs are close-based.
+CONFIRM_TREND_AT_ENTRY = True
 
 # Trend filter EMAs
-
 EMA_FAST = 5
 EMA_SLOW = 20
 
@@ -76,15 +89,19 @@ EMA_SLOW = 20
 ATR_WINDOW = 14
 ATR_MIN_POINTS = 2.0      # require at least this much average range
 
-# Trading session windows (IST)
-SESSION_WINDOWS = [(time(10, 20), time(11, 0)),
-                   (time(11, 1), time(14, 29))]
+# Trading session windows (IST) — aligned with docstring
+SESSION_WINDOWS = [(time(9, 20), time(11, 0)),
+                   (time(11, 15), time(15, 5))]
 
 # Daily loss cap (absolute ₹). Stop trading for the day after breaching.
-DAILY_LOSS_CAP = -1000   # tweak as needed
+DAILY_LOSS_CAP = -1000
 
 # If True, when both TP & SL are inside the exit bar range, assume SL hits first.
 CONSERVATIVE_BOTH_TOUCHED_SL_FIRST = True
+
+# Costs
+BROKERAGE_PER_TRADE = 20.0  # flat per leg
+SLIPPAGE_POINTS = 0.10      # per leg (entry and exit); in points
 
 # ==================== LOAD & PREP DATA ====================
 
@@ -167,41 +184,57 @@ def scalp_signal(i: int) -> str | None:
 
 # ==================== EXIT LOGIC (SINGLE-BAR HOLD) ====================
 
+def _decide_exit_path(bar: pd.Series):
+    """Return a tuple representing intra-bar path."""
+    o = float(bar.get('open', np.nan))
+    c = float(bar.get('close', np.nan))
+    if EXIT_BAR_PATH == "color":
+        return ("open", "low", "high", "close") if (not np.isnan(o) and not np.isnan(c) and c >= o) else ("open", "high", "low", "close")
+    elif EXIT_BAR_PATH == "bull":
+        return ("open", "low", "high", "close")
+    elif EXIT_BAR_PATH == "bear":
+        return ("open", "high", "low", "close")
+    else:
+        return ("worst",)
+
 def resolve_exit_on_bar(position: str, entry_price: float, bar: pd.Series):
     """
     Given a position and the single exit bar (next bar), decide exit price and reason.
     Conservative rule: if both TP & SL are inside the bar, assume SL triggers first.
 
-    Supports trailing target and trailing stop-loss based on the bar's high/low.
+    Trailing features are disabled by default for single-bar exits (configurable).
     """
-    high = bar['high']
-    low = bar['low']
+    high = float(bar['high'])
+    low  = float(bar['low'])
+    o    = float(bar.get('open', np.nan))
+    c    = float(bar.get('close', np.nan))
+
+    # Path model (used only if trailing allowed)
+    path = _decide_exit_path(bar)
+    apply_trailing = (not DISABLE_TRAILING_ON_SINGLE_BAR) and (path != ("worst",))
 
     if position == 'LONG':
-        # Initial levels
         tp = entry_price + TARGET_POINTS
         sl = entry_price - STOPLOSS_POINTS
 
-        # Calculate unrealized profit at the high of the bar
-        profit_at_high = high - entry_price
-
-        # Apply trailing target if enabled and trigger reached
         trailing_target_active = False
-        if ENABLE_TRAILING_TARGET and profit_at_high >= TRAILING_TARGET_TRIGGER:
-            trailing_tp = high - TRAILING_TARGET_OFFSET
-            if trailing_tp > tp:  # Only trail up, never down
-                tp = trailing_tp
-                trailing_target_active = True
-
-        # Apply trailing stoploss if enabled and trigger reached
         trailing_sl_active = False
-        if ENABLE_TRAILING_STOPLOSS and profit_at_high >= TRAILING_SL_TRIGGER:
-            trailing_sl_level = high - TRAILING_SL_OFFSET
-            if trailing_sl_level > sl:  # Only trail up, never down
-                sl = trailing_sl_level
-                trailing_sl_active = True
 
-        # Check what got hit
+        if apply_trailing:
+            # Compute unrealized profit at the bar's "high" node
+            profit_at_high = max(0.0, high - entry_price)
+            if ENABLE_TRAILING_TARGET and profit_at_high >= TRAILING_TARGET_TRIGGER:
+                trailing_tp = high - TRAILING_TARGET_OFFSET
+                if trailing_tp > tp:
+                    tp = trailing_tp
+                    trailing_target_active = True
+
+            if ENABLE_TRAILING_STOPLOSS and profit_at_high >= TRAILING_SL_TRIGGER:
+                trailing_sl_level = high - TRAILING_SL_OFFSET
+                if trailing_sl_level > sl:
+                    sl = trailing_sl_level
+                    trailing_sl_active = True
+
         hit_tp = high >= tp
         hit_sl = low <= sl
 
@@ -215,33 +248,29 @@ def resolve_exit_on_bar(position: str, entry_price: float, bar: pd.Series):
             reason = "Stoploss Hit (Trailing)" if trailing_sl_active else "Stoploss Hit"
             return sl, reason
         else:
-            return float(bar['close']), "End of Candle"
+            return float(c), "End of Candle"
 
     elif position == 'SHORT':
-        # Initial levels
         tp = entry_price - TARGET_POINTS
         sl = entry_price + STOPLOSS_POINTS
 
-        # Calculate unrealized profit at the low of the bar
-        profit_at_low = entry_price - low
-
-        # Apply trailing target if enabled and trigger reached
         trailing_target_active = False
-        if ENABLE_TRAILING_TARGET and profit_at_low >= TRAILING_TARGET_TRIGGER:
-            trailing_tp = low + TRAILING_TARGET_OFFSET
-            if trailing_tp < tp:  # Only trail down, never up
-                tp = trailing_tp
-                trailing_target_active = True
-
-        # Apply trailing stoploss if enabled and trigger reached
         trailing_sl_active = False
-        if ENABLE_TRAILING_STOPLOSS and profit_at_low >= TRAILING_SL_TRIGGER:
-            trailing_sl_level = low + TRAILING_SL_OFFSET
-            if trailing_sl_level < sl:  # Only trail down, never up
-                sl = trailing_sl_level
-                trailing_sl_active = True
 
-        # Check what got hit
+        if apply_trailing:
+            profit_at_low = max(0.0, entry_price - low)
+            if ENABLE_TRAILING_TARGET and profit_at_low >= TRAILING_TARGET_TRIGGER:
+                trailing_tp = low + TRAILING_TARGET_OFFSET
+                if trailing_tp < tp:
+                    tp = trailing_tp
+                    trailing_target_active = True
+
+            if ENABLE_TRAILING_STOPLOSS and profit_at_low >= TRAILING_SL_TRIGGER:
+                trailing_sl_level = low + TRAILING_SL_OFFSET
+                if trailing_sl_level < sl:
+                    sl = trailing_sl_level
+                    trailing_sl_active = True
+
         hit_tp = low <= tp
         hit_sl = high >= sl
 
@@ -255,7 +284,7 @@ def resolve_exit_on_bar(position: str, entry_price: float, bar: pd.Series):
             reason = "Stoploss Hit (Trailing)" if trailing_sl_active else "Stoploss Hit"
             return sl, reason
         else:
-            return float(bar['close']), "End of Candle"
+            return float(c), "End of Candle"
 
     else:
         raise ValueError("Unknown position type")
@@ -282,13 +311,12 @@ def run_backtest() -> pd.DataFrame:
         ts = row.name
         d = ts.date()
 
-        # New day: reset in_position (optional), reset flags if date changes
+        # New day setup
         if current_date is None or d != current_date:
             current_date = d
-            # ensure a container for the date
             daily_pnl.setdefault(d, 0.0)
 
-        # If day already hard-stopped, skip trading entries, but still exit if holding
+        # If day already hard-stopped, skip entries (but still process exits)
         day_stopped = d in day_hard_stopped
 
         # Exit on next bar only
@@ -301,15 +329,13 @@ def run_backtest() -> pd.DataFrame:
             else:  # SHORT
                 pnl_points = entry_price - exit_price
 
-            # Calculate gross P&L before costs
             gross_rupees = pnl_points * QTY_PER_POINT
 
-            # Calculate transaction costs
+            # Costs
             slippage_rupees = SLIPPAGE_POINTS * QTY_PER_POINT * 2  # entry + exit
             fees_rupees = 2 * BROKERAGE_PER_TRADE                   # entry + exit
             costs_rupees = slippage_rupees + fees_rupees
 
-            # Net P&L after costs
             pnl_rupees = gross_rupees - costs_rupees
             equity += pnl_rupees
 
@@ -318,21 +344,21 @@ def run_backtest() -> pd.DataFrame:
             daily_pnl.setdefault(ed, 0.0)
             daily_pnl[ed] += pnl_rupees
 
-            # if daily cap breached, mark date as stopped
+            # if daily cap breached, mark date as stopped (no more entries that day)
             if daily_pnl[ed] <= DAILY_LOSS_CAP:
                 day_hard_stopped.add(ed)
 
             results.append({
-                'entry_time': entry_time,
-                'exit_time' : next_bar.name,
-                'side'      : position,
-                'entry'     : entry_price,
-                'exit'      : exit_price,
-                'pnl_points': pnl_points,
+                'entry_time' : entry_time,
+                'exit_time'  : next_bar.name,
+                'side'       : position,
+                'entry'      : entry_price,
+                'exit'       : exit_price,
+                'pnl_points' : pnl_points,
                 'gross_rupees': gross_rupees,
                 'costs_rupees': costs_rupees,
-                'pnl_rupees': pnl_rupees,
-                'equity'    : equity,
+                'pnl_rupees' : pnl_rupees,
+                'equity'     : equity,
                 'exit_reason': exit_reason
             })
 
@@ -346,6 +372,13 @@ def run_backtest() -> pd.DataFrame:
         if not in_position and not day_stopped:
             sig = scalp_signal(i)
             if sig:
+                # Optional reconfirm trend (on signal bar i; conservative)
+                if CONFIRM_TREND_AT_ENTRY:
+                    if sig == 'LONG' and not trend_up(i):
+                        continue
+                    if sig == 'SHORT' and not trend_down(i):
+                        continue
+
                 # Enter at NEXT bar open
                 nb = df.iloc[i + 1]
                 in_position = True
@@ -364,7 +397,9 @@ def main(config=None):
         global ENABLE_TRAILING_TARGET, TRAILING_TARGET_TRIGGER, TRAILING_TARGET_OFFSET
         global ENABLE_TRAILING_STOPLOSS, TRAILING_SL_TRIGGER, TRAILING_SL_OFFSET
         global EMA_FAST, EMA_SLOW, ATR_WINDOW, ATR_MIN_POINTS, SESSION_WINDOWS, DAILY_LOSS_CAP
-        global CONSERVATIVE_BOTH_TOUCHED_SL_FIRST, BROKERAGE_PER_TRADE, SLIPPAGE_POINTS, df
+        global CONSERVATIVE_BOTH_TOUCHED_SL_FIRST, df
+        global EXIT_BAR_PATH, DISABLE_TRAILING_ON_SINGLE_BAR, CONFIRM_TREND_AT_ENTRY
+        global BROKERAGE_PER_TRADE, SLIPPAGE_POINTS
 
         INPUT_CSV = config.get('input_csv', INPUT_CSV)
         STARTING_CAPITAL = config.get('starting_capital', STARTING_CAPITAL)
@@ -372,8 +407,6 @@ def main(config=None):
         TARGET_POINTS = config.get('target_points', TARGET_POINTS)
         STOPLOSS_POINTS = config.get('stoploss_points', STOPLOSS_POINTS)
         ENABLE_TRAILING_TARGET = config.get('enable_trailing_target', ENABLE_TRAILING_TARGET)
-        BROKERAGE_PER_TRADE = config.get('brokerage_per_trade', BROKERAGE_PER_TRADE)
-        SLIPPAGE_POINTS = config.get('slippage_points', SLIPPAGE_POINTS)
         TRAILING_TARGET_TRIGGER = config.get('trailing_target_trigger', TRAILING_TARGET_TRIGGER)
         TRAILING_TARGET_OFFSET = config.get('trailing_target_offset', TRAILING_TARGET_OFFSET)
         ENABLE_TRAILING_STOPLOSS = config.get('enable_trailing_stoploss', ENABLE_TRAILING_STOPLOSS)
@@ -384,6 +417,11 @@ def main(config=None):
         ATR_WINDOW = config.get('atr_window', ATR_WINDOW)
         ATR_MIN_POINTS = config.get('atr_min_points', ATR_MIN_POINTS)
         DAILY_LOSS_CAP = config.get('daily_loss_cap', DAILY_LOSS_CAP)
+        EXIT_BAR_PATH = config.get('exit_bar_path', EXIT_BAR_PATH)
+        DISABLE_TRAILING_ON_SINGLE_BAR = config.get('disable_trailing_on_single_bar', DISABLE_TRAILING_ON_SINGLE_BAR)
+        CONFIRM_TREND_AT_ENTRY = config.get('confirm_trend_at_entry', CONFIRM_TREND_AT_ENTRY)
+        BROKERAGE_PER_TRADE = config.get('brokerage_per_trade', BROKERAGE_PER_TRADE)
+        SLIPPAGE_POINTS = config.get('slippage_points', SLIPPAGE_POINTS)
 
         # Parse session windows if provided
         if 'session_windows' in config:
@@ -412,6 +450,8 @@ def main(config=None):
     print(f"Daily loss cap: ₹{DAILY_LOSS_CAP}")
     print(f"Trailing Target: {'ON' if ENABLE_TRAILING_TARGET else 'OFF'} (Trigger: {TRAILING_TARGET_TRIGGER}, Offset: {TRAILING_TARGET_OFFSET})")
     print(f"Trailing SL: {'ON' if ENABLE_TRAILING_STOPLOSS else 'OFF'} (Trigger: {TRAILING_SL_TRIGGER}, Offset: {TRAILING_SL_OFFSET})")
+    print(f"Exit bar path: {EXIT_BAR_PATH} | Disable trailing on single bar: {DISABLE_TRAILING_ON_SINGLE_BAR}")
+    print(f"Confirm trend at entry: {CONFIRM_TREND_AT_ENTRY}")
     print(f"Costs → Brokerage/leg: ₹{BROKERAGE_PER_TRADE}, Slippage/leg: {SLIPPAGE_POINTS} pts")
     print("=" * 90)
 
@@ -506,6 +546,11 @@ if __name__ == "__main__":
     parser.add_argument('--atr_window', type=int, help='ATR window')
     parser.add_argument('--atr_min_points', type=float, help='Minimum ATR points')
     parser.add_argument('--daily_loss_cap', type=float, help='Daily loss cap')
+
+    # New args
+    parser.add_argument('--exit_bar_path', type=str, choices=['color','bull','bear','worst'], help='Intra-bar path assumption for exit bar')
+    parser.add_argument('--disable_trailing_on_single_bar', type=lambda x: x.lower()=='true', help='Disable trailing for single-bar exits (recommended)')
+    parser.add_argument('--confirm_trend_at_entry', type=lambda x: x.lower()=='true', help='Reconfirm trend at entry')
     parser.add_argument('--brokerage_per_trade', type=float, help='Brokerage per leg in rupees')
     parser.add_argument('--slippage_points', type=float, help='Slippage per leg in points')
 

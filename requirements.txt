@@ -6,3 +6,4 @@ uv
 matplotlib
 numpy
 ta-lib
+flask
