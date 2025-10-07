@@ -103,6 +103,9 @@ CONSERVATIVE_BOTH_TOUCHED_SL_FIRST = True
 BROKERAGE_PER_TRADE = 20.0  # flat per leg
 SLIPPAGE_POINTS = 0.10      # per leg (entry and exit); in points
 
+# Trade direction: "both" | "long_only" | "short_only"
+TRADE_DIRECTION = "both"
+
 # ==================== LOAD & PREP DATA ====================
 
 def load_data(path: str) -> pd.DataFrame:
@@ -159,6 +162,7 @@ def scalp_signal(i: int) -> str | None:
     Momentum-aligned breakout/breakdown:
       - LONG  if curr.high > prev.high and trend_up and ATR OK
       - SHORT if curr.low  < prev.low  and trend_down and ATR OK
+    Respects TRADE_DIRECTION setting.
     """
     if i < 1:
         return None
@@ -174,11 +178,13 @@ def scalp_signal(i: int) -> str | None:
 
     # Long breakout with uptrend
     if (curr['high'] > prev['high']) and trend_up(i):
-        return 'LONG'
+        if TRADE_DIRECTION in ("both", "long_only"):
+            return 'LONG'
 
     # Short breakdown with downtrend
     if (curr['low'] < prev['low']) and trend_down(i):
-        return 'SHORT'
+        if TRADE_DIRECTION in ("both", "short_only"):
+            return 'SHORT'
 
     return None
 
@@ -399,7 +405,7 @@ def main(config=None):
         global EMA_FAST, EMA_SLOW, ATR_WINDOW, ATR_MIN_POINTS, SESSION_WINDOWS, DAILY_LOSS_CAP
         global CONSERVATIVE_BOTH_TOUCHED_SL_FIRST, df
         global EXIT_BAR_PATH, DISABLE_TRAILING_ON_SINGLE_BAR, CONFIRM_TREND_AT_ENTRY
-        global BROKERAGE_PER_TRADE, SLIPPAGE_POINTS
+        global BROKERAGE_PER_TRADE, SLIPPAGE_POINTS, TRADE_DIRECTION
 
         INPUT_CSV = config.get('input_csv', INPUT_CSV)
         STARTING_CAPITAL = config.get('starting_capital', STARTING_CAPITAL)
@@ -422,6 +428,7 @@ def main(config=None):
         CONFIRM_TREND_AT_ENTRY = config.get('confirm_trend_at_entry', CONFIRM_TREND_AT_ENTRY)
         BROKERAGE_PER_TRADE = config.get('brokerage_per_trade', BROKERAGE_PER_TRADE)
         SLIPPAGE_POINTS = config.get('slippage_points', SLIPPAGE_POINTS)
+        TRADE_DIRECTION = config.get('trade_direction', TRADE_DIRECTION)
 
         # Parse session windows if provided
         if 'session_windows' in config:
@@ -448,6 +455,7 @@ def main(config=None):
     print(f"Qty per point: {QTY_PER_POINT}  | Start Capital: ₹{STARTING_CAPITAL:,}")
     print(f"ATR≥{ATR_MIN_POINTS}, EMA{EMA_FAST}/{EMA_SLOW} trend, Sessions: {[(s.strftime('%H:%M'), e.strftime('%H:%M')) for s,e in SESSION_WINDOWS]}")
     print(f"Daily loss cap: ₹{DAILY_LOSS_CAP}")
+    print(f"Trade Direction: {TRADE_DIRECTION.upper()}")
     print(f"Trailing Target: {'ON' if ENABLE_TRAILING_TARGET else 'OFF'} (Trigger: {TRAILING_TARGET_TRIGGER}, Offset: {TRAILING_TARGET_OFFSET})")
     print(f"Trailing SL: {'ON' if ENABLE_TRAILING_STOPLOSS else 'OFF'} (Trigger: {TRAILING_SL_TRIGGER}, Offset: {TRAILING_SL_OFFSET})")
     print(f"Exit bar path: {EXIT_BAR_PATH} | Disable trailing on single bar: {DISABLE_TRAILING_ON_SINGLE_BAR}")
@@ -553,6 +561,7 @@ if __name__ == "__main__":
     parser.add_argument('--confirm_trend_at_entry', type=lambda x: x.lower()=='true', help='Reconfirm trend at entry')
     parser.add_argument('--brokerage_per_trade', type=float, help='Brokerage per leg in rupees')
     parser.add_argument('--slippage_points', type=float, help='Slippage per leg in points')
+    parser.add_argument('--trade_direction', type=str, choices=['both','long_only','short_only'], help='Trade direction: both, long_only, or short_only')
 
     args = parser.parse_args()
 

@@ -40,11 +40,11 @@ def fetch_history(symbol, exchange, interval, start_date, end_date, output_csv=N
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Fetch historical data from OpenAlgo')
-    parser.add_argument('--symbol', type=str, default="NIFTY25NOV2525800PE", help='Trading symbol')
+    parser.add_argument('--symbol', type=str, default="NIFTY28OCT2525000PE", help='Trading symbol')
     parser.add_argument('--exchange', type=str, default="NFO", help='Exchange (NFO, NSE, etc.)')
     parser.add_argument('--interval', type=str, default="5m", help='Time interval (1m, 5m, 15m, 1h, D)')
-    parser.add_argument('--start_date', type=str, default="2025-07-01", help='Start date (YYYY-MM-DD)')
-    parser.add_argument('--end_date', type=str, default="2025-10-04", help='End date (YYYY-MM-DD)')
+    parser.add_argument('--start_date', type=str, default="2025-10-01", help='Start date (YYYY-MM-DD)')
+    parser.add_argument('--end_date', type=str, default="2025-10-06", help='End date (YYYY-MM-DD)')
     parser.add_argument('--output_csv', type=str, default=None, help='Output CSV filename')
 
     args = parser.parse_args()

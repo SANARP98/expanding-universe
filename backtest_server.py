@@ -371,6 +371,26 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
 
+                <!-- Trade Direction -->
+                <div class="section">
+                    <div class="section-header" onclick="toggleSection(this)">
+                        🎯 Trade Direction
+                        <span>▼</span>
+                    </div>
+                    <div class="section-content">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>Trade Direction</label>
+                                <select name="trade_direction" required>
+                                    <option value="both" selected>Both Long and Short</option>
+                                    <option value="long_only">Long Only</option>
+                                    <option value="short_only">Short Only</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Indicators -->
                 <div class="section">
                     <div class="section-header" onclick="toggleSection(this)">
@@ -649,8 +669,7 @@ def run_backtest():
             '--slippage_points', str(data.get('slippage_points', 0.10)),
             '--exit_bar_path', str(data.get('exit_bar_path', 'color')),
             '--confirm_trend_at_entry', str(data.get('confirm_trend_at_entry', True)),
-            '--enable_eod_square_off', str(data.get('enable_eod_square_off', True)),
-            '--square_off_time', str(data.get('square_off_time', '15:25'))
+            '--trade_direction', str(data.get('trade_direction', 'both'))
         ]
 
         backtest_result = subprocess.run(backtest_cmd, capture_output=True, text=True)

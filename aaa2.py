@@ -46,13 +46,13 @@ import argparse
 
 # ==================== CONFIGURATION ====================
 
-INPUT_CSV = "NIFTY28OCT2524800CE_history.csv"
+INPUT_CSV = "NIFTY28OCT2525000PE_history.csv"
 
 STARTING_CAPITAL = 100_000
 QTY_PER_POINT = 150
 
-TARGET_POINTS   = 10.0
-STOPLOSS_POINTS = 2.0
+TARGET_POINTS   = 8.0
+STOPLOSS_POINTS = 25.0
 
 # Trend filter EMAs
 EMA_FAST = 5
@@ -79,6 +79,9 @@ SLIPPAGE_POINTS     = 0.10   # per leg
 
 # Reconfirm trend on the signal bar before taking entry (conservative)
 CONFIRM_TREND_AT_ENTRY = True
+
+# Trade direction: "both" | "long_only" | "short_only"
+TRADE_DIRECTION = "both"
 
 # Intraday square-off: never carry positions overnight
 ENABLE_EOD_SQUARE_OFF = True
@@ -143,6 +146,7 @@ def past_square_off_time(ts) -> bool:
 def scalp_signal(i: int) -> str | None:
     """
     Momentum-aligned breakout/breakdown signal on bar i.
+    Respects TRADE_DIRECTION setting.
     """
     if i < 1:
         return None
@@ -156,10 +160,12 @@ def scalp_signal(i: int) -> str | None:
 
     # Long breakout with uptrend
     if (curr['high'] > prev['high']) and trend_up(i):
-        return 'LONG'
+        if TRADE_DIRECTION in ("both", "long_only"):
+            return 'LONG'
     # Short breakdown with downtrend
     if (curr['low'] < prev['low']) and trend_down(i):
-        return 'SHORT'
+        if TRADE_DIRECTION in ("both", "short_only"):
+            return 'SHORT'
     return None
 
 def bar_path_tuple(bar: pd.Series):
@@ -402,7 +408,7 @@ def main(config=None):
         global TARGET_POINTS, STOPLOSS_POINTS, EMA_FAST, EMA_SLOW
         global ATR_WINDOW, ATR_MIN_POINTS, SESSION_WINDOWS, DAILY_LOSS_CAP
         global EXIT_BAR_PATH, BROKERAGE_PER_TRADE, SLIPPAGE_POINTS, CONFIRM_TREND_AT_ENTRY, df
-        global ENABLE_EOD_SQUARE_OFF, SQUARE_OFF_TIME
+        global ENABLE_EOD_SQUARE_OFF, SQUARE_OFF_TIME, TRADE_DIRECTION
 
         INPUT_CSV             = config.get('input_csv', INPUT_CSV)
         STARTING_CAPITAL      = config.get('starting_capital', STARTING_CAPITAL)
@@ -419,6 +425,7 @@ def main(config=None):
         SLIPPAGE_POINTS       = config.get('slippage_points', SLIPPAGE_POINTS)
         CONFIRM_TREND_AT_ENTRY= config.get('confirm_trend_at_entry', CONFIRM_TREND_AT_ENTRY)
         ENABLE_EOD_SQUARE_OFF = config.get('enable_eod_square_off', ENABLE_EOD_SQUARE_OFF)
+        TRADE_DIRECTION       = config.get('trade_direction', TRADE_DIRECTION)
 
         if 'square_off_time' in config:
             hh, mm = map(int, str(config['square_off_time']).split(':'))
@@ -445,6 +452,7 @@ def main(config=None):
     print("=" * 96)
     print(f"TP={TARGET_POINTS} | SL={STOPLOSS_POINTS} (R:R={TARGET_POINTS/STOPLOSS_POINTS:.2f}) | Qty/pt={QTY_PER_POINT}")
     print(f"ATR≥{ATR_MIN_POINTS}, EMA{EMA_FAST}/{EMA_SLOW}, Sessions={[(s.strftime('%H:%M'), e.strftime('%H:%M')) for s,e in SESSION_WINDOWS]}")
+    print(f"Trade Direction: {TRADE_DIRECTION.upper()}")
     print(f"Exit bar path: {EXIT_BAR_PATH} | Confirm trend at entry: {CONFIRM_TREND_AT_ENTRY}")
     print(f"Costs -> Brokerage/leg: ₹{BROKERAGE_PER_TRADE}, Slippage/leg: {SLIPPAGE_POINTS} pts")
     print(f"EOD Square-off: {ENABLE_EOD_SQUARE_OFF} at {SQUARE_OFF_TIME.strftime('%H:%M')} | Daily loss cap: ₹{DAILY_LOSS_CAP}")
@@ -533,6 +541,7 @@ if __name__ == "__main__":
     parser.add_argument('--confirm_trend_at_entry', type=lambda x: x.lower()=='true')
     parser.add_argument('--enable_eod_square_off', type=lambda x: x.lower()=='true')
     parser.add_argument('--square_off_time', type=str, help='HH:MM (IST)')
+    parser.add_argument('--trade_direction', type=str, choices=['both','long_only','short_only'], help='Trade direction: both, long_only, or short_only')
 
     args = parser.parse_args()
     cfg = {k: v for k, v in vars(args).items() if v is not None}
